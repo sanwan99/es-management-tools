@@ -1,0 +1,118 @@
+# ES集群第三次攻击事件处理命令记录
+# 事件时间: 2025-07-16 ~ 2025-07-17
+# 处理人员: ES运维团队
+
+## 1. 故障发现阶段
+
+# 检查集群健康状态
+curl -s "http://192.168.0.93:9201/_cluster/health?pretty"
+
+# 查看未分配分片原因
+curl -s "http://192.168.0.93:9201/_cat/shards?v&h=index,shard,prirep,state,unassigned.reason,node" | grep UNASSIGNED | head -10
+
+# 查看集群分片分配详情
+curl -s "http://192.168.0.93:9201/_cluster/allocation/explain?pretty"
+
+# 查看集群节点状态
+curl -s "http://192.168.0.93:9201/_cat/nodes?v"
+
+## 2. 攻击源分析阶段
+
+# 分析传输层攻击日志
+grep -c "unsupported version.*5.0.0" /mnt/e/wsl/es/20250717故障分析/greencloud-log-center-2025-07-16-2.log
+# 结果: 3491次攻击
+
+# 获取攻击时间窗口
+grep "192.168.56" /mnt/e/wsl/es/20250717故障分析/greencloud-log-center-2025-07-16-2.log | head -1
+grep "192.168.56" /mnt/e/wsl/es/20250717故障分析/greencloud-log-center-2025-07-16-2.log | tail -1
+# 攻击时间: 2025-07-16T22:22:51 ~ 23:59:56
+
+## 3. 攻击源定位阶段 (在192.168.56.50服务器上执行)
+
+# 查看tomcat服务状态
+/root/mode/seetom
+# 发现: tomcat1 (erlangshen) 正在运行
+
+# 查看连接9301的进程
+netstat -antup | grep ":9301\|9301:"
+
+# 查看连接到ES集群的连接
+netstat -antup | grep "192.168.0.90"
+
+# 查看Java进程
+ps aux | grep java
+
+# 查看erlangshen进程
+ps aux | grep erlangshen
+
+## 4. 解决方案实施阶段
+
+### 在192.168.56.50服务器上执行:
+
+# 停止tomcat1服务
+/root/mode/seetom stop tomcat1
+
+# 编辑开机自启动文件，注释erlangshen启动命令
+vim /etc/rc.local
+# 注释掉相关的启动命令
+
+# 查找并杀掉erlangshen相关进程
+ps -ef | grep pms
+ps -ef | grep erlangshen
+kill -9 [PID]
+
+# 禁用自启动
+systemctl disable erlangshen
+
+### 在192.168.56.51服务器上执行:
+# 重复相同的操作
+vim /etc/rc.local
+ps -ef | grep pms
+ps -ef | grep erlangshen
+kill -9 [PID]
+
+### 在192.168.56.52服务器上执行:
+# 重复相同的操作
+vim /etc/rc.local
+ps -ef | grep pms
+ps -ef | grep erlangshen
+kill -9 [PID]
+
+## 5. 验证解决效果
+
+# 监控ES日志，确认攻击停止
+tail -f /var/log/elasticsearch/greencloud-log-center.log | grep "unsupported version"
+# 结果: 攻击在09:59分停止
+
+# 检查集群恢复状态
+curl -s "http://192.168.0.93:9201/_cluster/health?pretty"
+
+# 检查未分配分片数量变化
+curl -s "http://192.168.0.93:9201/_cat/shards?v&h=index,shard,prirep,state" | grep UNASSIGNED | wc -l
+
+# 检查node-warm-1节点状态
+curl -s "http://192.168.0.93:9201/_cat/nodes?v" | grep "node-warm-1\|192.168.0.90"
+
+## 6. 后续监控命令
+
+# 持续监控ES日志中的异常
+tail -f /var/log/elasticsearch/*.log | grep -E "(unsupported version|IllegalStateException)"
+
+# 监控集群健康状态
+watch -n 10 'curl -s "http://192.168.0.93:9201/_cluster/health" | jq .'
+
+# 检查服务状态
+systemctl status erlangshen
+/root/mode/seetom
+
+## 关键发现总结:
+# 1. 攻击源: 192.168.56.50/51/52三台服务器的erlangshen服务
+# 2. 攻击强度: 3491次ES 5.0连接尝试
+# 3. 被踢节点: node-warm-1 (192.168.0.90:9301)
+# 4. 解决方案: 彻底停止erlangshen服务并禁用自启动
+# 5. 解决效果: 攻击立即停止，集群开始恢复
+
+## 重要提醒:
+# - 这是第三次相同故障，现已彻底根治
+# - erlangshen服务已标记为废弃，不应再启动
+# - 建议定期检查遗留服务状态，防止类似问题
