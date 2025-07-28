@@ -79,3 +79,10 @@ target/
 *.key
 *.p12
 *.jks
+
+# Fault analysis reports (contains sensitive information)
+20250709故障分析报告/
+20250717故障分析/
+20250722es排查/
+*故障分析*/
+*排查*/
